@@ -17,64 +17,67 @@ def article_vote(conn, user, article):
 
 
 def post_article(conn, user, title, link):
-    article_id = str(conn.incr('article:'))     
-
+    '''用户user发布一篇文章，文章标题为title,链接为link'''
+    # 生成一篇文章id号，如果键article:不存在，则生成的id号为0,；否则在原来的值上加1
+    article_id = str(conn.incr('article:'))
+    # 将发布文章的用户添加到记录文章已投票用户的集合里面
     voted = 'voted:' + article_id
-    conn.sadd(voted, user)                     
-    conn.expire(voted, ONE_WEEK_IN_SECONDS)    
-
+    conn.sadd(voted, user)
+    # 将记录文章已投票用户的集合键设置过期时间为一周，当一周过去后，将不能对该文章进行投票
+    conn.expire(voted, ONE_WEEK_IN_SECONDS)
+    
+    # 将文章信息添加到记录文章信息的hash中
     now = time.time()
     article = 'article:' + article_id
-    conn.hmset(article, {                      
-        'title': title,                        
-        'link': link,                           
-        'poster': user,                         
-        'time': now,                            
-        'votes': 1,                             
-    })                                          
-
-    conn.zadd('score:', article, now + VOTE_SCORE)  
-    conn.zadd('time:', article, now)                
+    conn.hmset(article, {
+        'title': title,
+        'link': link,
+        'poster': user,
+        'time': now,
+        'votes': 1,
+    })
+    # 将发布文章的评分加入到记录文章评分的有序集合中
+    conn.zadd('score:', article, now + VOTE_SCORE)
+    # 将发布文章的时间加入到记录文章时间的有序集合中    
+    conn.zadd('time:', article, now)
 
     return article_id
 
 
-ARTICLES_PER_PAGE = 25
-
+ARTICLE_PER_PAGE = 25
 def get_articles(conn, page, order='score:'):
-    start = (page-1) * ARTICLES_PER_PAGE            
-    end = start + ARTICLES_PER_PAGE - 1             
-
-    ids = conn.zrevrange(order, start, end)         
+    '''根据页面page，获取评分最高或最新发布的文章'''
+    # 按评分从高到低或发布时间从新到旧获取文章id，范围为start——end
+    start = (page - 1) * ARTICLE_PER_PAGE
+    end = start + ARTICLE_PER_PAGE - 1
+    ids = conn.zrevrange(order, start, end)
+    # 获取每一篇文章的详细信息，存储在一个列表中
     articles = []
-    for id in ids:                                  
-        article_data = conn.hgetall(id)             
-        article_data['id'] = id                     
-        articles.append(article_data)               
-
+    for id in ids:
+        article_data = conn.hgetall(id)
+        article_data['id'] = id
+        articles.append(article_data)
     return articles
 
 
-
 def add_remove_groups(conn, article_id, to_add=[], to_remove=[]):
-    article = 'article:' + article_id           
+    '''将给定的文章添加到指定分组中(to_add)，或将给定文章移除指定分组(to_remove)'''
+    article = 'article:' + article_id
     for group in to_add:
-        conn.sadd('group:' + group, article)    
+        conn.sadd('group:' + group, article)
     for group in to_remove:
-        conn.srem('group:' + group, article)    
+        conn.srem('group:' + group, article)
 
 
 
 def get_group_articles(conn, group, page, order='score:'):
-    key = order + group                                     
-    if not conn.exists(key):                                
-        conn.zinterstore(key,                               
-            ['group:' + group, order],                      
-            aggregate='max',                                
-        )
-        conn.expire(key, 60)                                
-    return get_articles(conn, page, key)                    
-
+    '''根据存储群组文章的集合和存储文章评分的有序集合，得到按文章评分排序的群组文章，同理，也可以得到按文章发布时间排序的群组文章'''
+    key = order + group
+    # 如果按文章评分排序的群组文章集合键不存在，则根据存储群组文章的集合和存储文章评分的有序集合,执行ZINTERSTORE命令创建该键，并设置过期时间为60s
+    if not conn.exists(key):                    
+       conn.zinterstore(key, ['group:' + group, order], aggregate='max')
+    conn.expire(key, 60) 
+    return get_articles(conn, page, key)
 
 #-------------- Below this line are helpers to test the code ----------------#
 
@@ -83,7 +86,8 @@ class TestCh01(unittest.TestCase):
     def setUp(self):
         '''测试函数前的准备操作'''
         import redis
-        self.conn = redis.Redis(db=15)
+        # 连接到本地Redis服务器
+        self.conn = redis.Redis(host='127.0.0.1', port=6379)
 
     def tearDown(self):
         '''测试函数后的销毁操作'''
@@ -96,24 +100,24 @@ class TestCh01(unittest.TestCase):
         import pprint
 
         article_id = str(post_article(conn, 'username', 'A title', 'http://www.google.com'))
-        print "We posted a new article with id:", article_id
+        print("We posted a new article with id:", article_id)
         print
         self.assertTrue(article_id)
 
-        print "Its HASH looks like:"
+        print("Its HASH looks like:")
         r = conn.hgetall('article:' + article_id)
-        print r
+        print(r)
         print
         self.assertTrue(r)
 
         article_vote(conn, 'other_user', 'article:' + article_id)
-        print "We voted for the article, it now has votes:",
+        print("We voted for the article, it now has votes:",)
         v = int(conn.hget('article:' + article_id, 'votes'))
-        print v
+        print(v)
         print
         self.assertTrue(v > 1)
 
-        print "The currently highest-scoring articles are:"
+        print("The currently highest-scoring articles are:")
         articles = get_articles(conn, 1)
         pprint.pprint(articles)
         print
@@ -121,7 +125,7 @@ class TestCh01(unittest.TestCase):
         self.assertTrue(len(articles) >= 1)
 
         add_remove_groups(conn, article_id, ['new-group'])
-        print "We added the article to a new group, other articles include:"
+        print("We added the article to a new group, other articles include:")
         articles = get_group_articles(conn, 'new-group', 1)
         pprint.pprint(articles)
         print
