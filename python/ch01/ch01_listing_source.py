@@ -70,16 +70,14 @@ def add_remove_groups(conn, article_id, to_add=[], to_remove=[]):
 
 
 
-def get_group_articles(conn, group, page, order='scoere:'):
+
+def get_group_articles(conn, group, page, order='score:'):
     '''根据存储群组文章的集合和存储文章评分的有序集合，得到按文章评分排序的群组文章，同理，也可以得到按文章发布时间排序的群组文章'''
     key = order + group
     # 如果按文章评分排序的群组文章集合键不存在，则根据存储群组文章的集合和存储文章评分的有序集合,执行ZINTERSTORE命令创建该键，并设置过期时间为60s
     if not conn.exists(key):                    
-        conn.zinterstore(key, 
-            ['group:' + group, order],
-            aggregate='max',
-        )
-        conn.expire(key, 60)
+       conn.zinterstore(key, ['group:' + group, order], aggregate='max')
+    conn.expire(key, 60) 
     return get_articles(conn, page, key)
 
 #-------------- Below this line are helpers to test the code ----------------#
@@ -89,7 +87,8 @@ class TestCh01(unittest.TestCase):
     def setUp(self):
         '''测试函数前的准备操作'''
         import redis
-        self.conn = redis.Redis(db=15)
+        # 连接到本地Redis服务器
+        self.conn = redis.Redis(host='127.0.0.1', port=6379)
 
     def tearDown(self):
         '''测试函数后的销毁操作'''
